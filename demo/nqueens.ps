@@ -1,0 +1,72 @@
+% nqueens - the nqueens problem implemented in postscript
+% Copyright (C) 2014  Andreas Rohner
+% 
+% This program is free software: you can redistribute it and/or modify
+% it under the terms of the GNU Lesser General Public License as published by
+% the Free Software Foundation, either version 3 of the License, or
+% (at your option) any later version.
+% 
+% This program is distributed in the hope that it will be useful,
+% but WITHOUT ANY WARRANTY; without even the implied warranty of
+% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+% GNU Lesser General Public License for more details.
+% 
+% You should have received a copy of the GNU Lesser General Public License
+% along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+% set the size of the board
+/n 13 def
+
+% check - every element on the stack contains an integer, which represents
+% the column of the board
+/check {
+	% put temporary variables on the stack
+	dup 1 sub dup 2 add
+	
+	% loop through all rows to the current row
+	1 1 count 5 sub {
+		% read column index
+		2 add index
+		
+		% check for a queen in the same column
+		dup 4 index eq { pop false exit } if
+
+		% check diagonals
+		2 copy eq { pop false exit } if
+		2 index eq { false exit } if
+
+		1 add exch 1 sub exch
+	} for
+} def
+
+% debugging command
+/cstack {
+	0 1 count 3 sub {
+		index =
+	} for
+} def
+
+% solve nqueens problem for a board size of n
+/solve {
+	/c 0 def
+	-1
+	{
+		% add up the column value until n-1 is reached, backtrack
+		% if that solution is not valid
+		1 add 1 n 1 sub {
+			check false ne { pop -1 exit } if
+			pop pop
+			pop
+		} for
+
+		% nothing left on the stack, we are finished
+		% backtracking has removed everything on the stack
+		count dup 0 eq { pop exit } if
+
+		% n elements on the stack, we have a solution, inc solution count
+		1 sub n eq { /c c 1 add def pop } if
+	} loop
+	c
+} def
+
+solve = quit

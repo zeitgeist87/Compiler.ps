@@ -1,0 +1,408 @@
+% PostscriptCompiler - Small toy compiler for postscript written in postscript
+% Copyright (C) 2014  Andreas Rohner
+% 
+% This program is free software: you can redistribute it and/or modify
+% it under the terms of the GNU Lesser General Public License as published by
+% the Free Software Foundation, either version 3 of the License, or
+% (at your option) any later version.
+% 
+% This program is distributed in the hope that it will be useful,
+% but WITHOUT ANY WARRANTY; without even the implied warranty of
+% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+% GNU Lesser General Public License for more details.
+% 
+% You should have received a copy of the GNU Lesser General Public License
+% along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+% debugging command - prints out the stack and
+% halts execution until key is pressed
+/p {
+	pstack
+	(>: ) print flush
+	(%stdin) (r) file 64 string readline pop pop
+} bind def
+
+/prepareconstants {
+	dup type /integertype eq {/iconst cvx} if
+	dup type /stringtype eq {/sconst cvx} if
+	dup /def eq {
+		% do not inline
+		%pop dup type /arraytype eq
+		%{ dup dup length 1 sub /return cvx put /fdef cvx }
+		%{ /vdef cvx } ifelse
+
+		% inline everything
+		pop dup type /arraytype eq { /fdef cvx } { /vdef cvx } ifelse
+	} if
+	dup /dup eq {pop /c_dup cvx} if
+	dup /pop eq {pop /c_pop cvx} if
+	dup /exch eq {pop /c_exch cvx} if
+	dup /add eq {pop /c_add cvx} if
+	dup /sub eq {pop /c_sub cvx} if
+	dup /index eq {pop /c_index cvx} if
+	dup /if eq {pop /c_if cvx} if
+	dup /ifelse eq {pop /c_ifelse cvx} if
+	dup /for eq {pop /c_for cvx} if
+	dup /exit eq {pop /c_exit cvx} if
+	dup /loop eq {pop /c_loop cvx} if
+	dup /eq eq {pop /c_eq cvx} if
+	dup /ne eq {pop /c_ne cvx} if
+	dup /copy eq {pop /c_copy cvx} if
+	dup /print eq {pop /c_print cvx} if
+	dup /= eq {pop /c_print cvx} if
+	dup /quit eq { pop } if % not implemented yet
+} def
+
+/optimizations {
+	count 2 gt {
+		3 copy /add eq exch /iconst eq and exch 1 eq and {
+			pop pop pop /inc cvx
+		} if
+	} if
+	count 2 gt {
+		3 copy /sub eq exch /iconst eq and exch 1 eq and {
+			pop pop pop /dec cvx
+		} if
+	} if
+	
+	count 2 gt {
+		3 copy /if eq exch type /arraytype eq  and exch /c_eq eq and {
+			pop exch pop /c_ifeq cvx
+		} if
+	} if
+	
+		
+	count 2 gt {
+		3 copy /if eq exch type /arraytype eq  and exch /c_ne eq and {
+			pop exch pop /c_ifne cvx
+		} if
+	} if
+
+	prepareconstants
+
+	dup type /arraytype eq {
+		[ exch {
+			optimizations
+		} forall
+		/noreturn cvx
+		] cvx 
+	} if
+} def
+
+/parse {
+	/input exch def
+	[ /main cvx
+	{
+		input token not {input closefile exit} if
+		optimizations
+	} loop
+	/mainreturn cvx
+	]
+} def
+
+/outmain (main.s) (w) file def
+/outfunc (func.s) (w) file def
+
+outmain (\t.section\t.rodata\n) writestring
+outmain (_PRINTFORMAT:\n) writestring
+outmain (\t.string\t"%lld\\n"\n) writestring
+outmain (.text\n) writestring
+
+outfunc (\t.section\t.rodata\n) writestring
+outfunc (_PRINTFORMAT:\n) writestring
+outfunc (\t.string\t"%lld\\n"\n) writestring
+outfunc (.text\n) writestring
+
+/compileenv 256 dict def
+compileenv begin
+
+/print {
+	outputfile exch writestring
+} def
+
+% define alternative commands that print out assembler when executed
+
+/c_add {
+	(\tpop %rdx\n) print
+	(\tpop %rax\n) print
+	(\tadd %rdx,%rax\n) print
+	(\tpush %rax\n) print
+} def
+
+/c_sub {
+	(\tpop %rdx\n) print
+	(\tpop %rax\n) print
+	(\tsub %rdx,%rax\n) print
+	(\tpush %rax\n) print
+} def
+
+/count {
+	(\tmov %rbp,%rax\n) print
+	(\tsub %rsp,%rax\n) print
+	(\tshr $3,%rax\n) print
+	(\tpush %rax\n) print
+} def
+
+/c_dup {
+	(\tmov (%rsp),%rax\n) print
+	(\tpush %rax\n) print
+} def
+
+/c_pop {
+	(\tadd $8,%rsp\n) print
+} def
+
+/c_index {	
+	(\tpop %rax\n) print
+	(\tmov (%rsp,%rax,8),%rax\n) print
+	(\tpush %rax\n) print
+} def
+
+/c_copy {
+	(\tpop %rax\n) print
+	(\tleaq (%rsp,%rax,8),%rax\n) print
+	(\tmov %rsp,%rdx\n) print
+	(0:\n) print
+	(\tsub $8,%rax\n) print
+	(\tpush \(%rax\)\n) print
+	(\tcmp %rax,%rdx\n\tjne 0b\n) print
+} def
+
+/c_exch {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\tpush %rax\n) print
+	(\tpush %rdx\n) print
+} def
+
+/c_eq {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\txor %rcx,%rcx\n) print
+	(\tcmp %rax,%rdx\n) print
+	(\tsete %cl\n) print
+	(\tpush %rcx\n) print
+} def
+
+/c_ne {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\txor %rcx,%rcx\n) print
+	(\tcmp %rax,%rdx\n) print
+	(\tsetne %cl\n) print
+	(\tpush %rcx\n) print
+} def
+
+/FOR_COUNTER 0 def
+/EXIT_COUNTER 0 def
+
+/c_for {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\tpop %rcx\n) print
+	(\txchg %rsp,%r12\n) print
+	(\tpush %rdx\n) print
+	(\tpush %rax\n) print
+	(\tpush %rcx\n) print
+	(\txchg %rsp,%r12\n) print
+
+	(LFOR_) print FOR_COUNTER 64 string cvs dup print (:\n) print
+	(\tmov \(%r12\),%rax\n) print
+	(\tcmpq %rax,8\(%r12\)\n\tjl LFOREXIT_) print dup print (\n) print
+	(\tpushq %rax\n) print
+	(\tmovq 16\(%r12\),%rax\n) print
+	(\taddq %rax,\(%r12\)\n) print
+	exch EXIT_COUNTER 
+	/EXIT_COUNTER FOR_COUNTER def
+	/FOR_COUNTER FOR_COUNTER 1 add def
+	exch exec
+	/EXIT_COUNTER exch def
+	(\tjmp LFOR_) print dup print (\n) print
+	(LFOREXIT_) print print (:\n) print
+	(\tadd $24,%r12\n) print
+} def
+
+/c_loop {
+	(LFOR_) print FOR_COUNTER 64 string cvs dup print (:\n) print
+	exch EXIT_COUNTER
+	/EXIT_COUNTER FOR_COUNTER def
+	/FOR_COUNTER FOR_COUNTER 1 add def
+	exch exec
+	/EXIT_COUNTER exch def
+	(\tjmp LFOR_) print dup print (\n) print
+	(LFOREXIT_) print print (:\n) print
+} def
+
+/c_exit {
+	(\tjmp LFOREXIT_) print EXIT_COUNTER 64 string cvs print (\n) print
+} def
+
+/true {
+	(\tpush $1\n) print
+} def
+
+/false {
+	(\tpush $0\n) print
+} def
+
+/IF_COUNTER 0 def
+
+/c_if {
+	(\tpop %rax\n) print
+	(\ttest %rax,%rax\n\tjz LIF_) print
+	IF_COUNTER 64 string cvs dup print (\n) print
+	/IF_COUNTER IF_COUNTER 1 add def
+	exch exec
+	(LIF_) print print (:\n) print
+} def
+
+/c_ifeq {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\tcmp %rax,%rdx\n\tjne LIF_) print
+	IF_COUNTER 64 string cvs dup print (\n) print
+	/IF_COUNTER IF_COUNTER 1 add def
+	exch exec
+	(LIF_) print print (:\n) print
+} def
+
+/c_ifne {
+	(\tpop %rax\n) print
+	(\tpop %rdx\n) print
+	(\tcmp %rax,%rdx\n\tje LIF_) print
+	IF_COUNTER 64 string cvs dup print (\n) print
+	/IF_COUNTER IF_COUNTER 1 add def
+	exch exec
+	(LIF_) print print (:\n) print
+} def
+
+/c_ifelse {
+	exch
+	(\tpop %rax\n) print
+	(\ttest %rax,%rax\n\tjz LIF_) print
+	IF_COUNTER 64 string cvs dup print (\n) print
+	/IF_COUNTER IF_COUNTER 1 add def
+	exch exec
+	(\tjmp LENDIF_) print dup print (\n) print
+	(LIF_) print dup print (:\n) print
+	exch exec
+	(LENDIF_) print print (:\n) print
+} def
+
+/iconst {
+	(\tpush $) print
+	64 string cvs print
+	(\n) print
+} def
+
+/inc {
+	(\tpop %rax\n) print
+	(\tinc %rax\n) print
+	(\tpush %rax\n) print	
+} def
+
+/dec {
+	(\tpop %rax\n) print
+	(\tdec %rax\n) print
+	(\tpush %rax\n) print	
+} def
+
+/return {
+	(\txchg %rsp,%r12\n) print
+	(\tret\n) print
+	/outputfile outmain def
+} def
+
+/mainreturn {
+	(\txor %rax,%rax\n) print
+	(\tmov %r12,%rsp\n) print
+	(\tret\n) print
+} def
+
+/main {
+	/outputfile outmain def
+	(.globl main\n.type main, @function\nmain:\n) print
+	(\tmov %rsp,%r12\n) print %return pointer stack
+	(\tsub $1024,%rsp\n) print
+	(\tmov %rsp,%rbp\n) print
+} def
+
+/c_print {
+	(\tpop %rsi\n) print
+	(\tmov $_PRINTFORMAT,%rdi\n) print
+	(\txor %rax,%rax\n) print
+	(\tcall	printf\n) print
+} def
+
+% do not inline
+%/fdef {
+%	/outputfile outfunc def
+%	exch dup dup length string cvs 
+%	(.globl ) print dup print (\n) print dup print (:\n) print
+%	(\txchg %rsp,%r12\n) print
+%	[
+%		(\txchg %rsp,%r12\n\tcall ) /print cvx
+%		4 -1 roll /print cvx
+%		(\n) /print cvx
+%		(\txchg %rsp,%r12\n) /print cvx
+%	] cvx def
+%	exec
+%} def
+
+% inline everything
+/fdef {
+	def
+} def
+
+/vdef {
+	dup where {
+		pop
+		(\tpop ) print
+		load 2 get print (\n) print	
+	} {
+		%rbx, r13, r14, r15
+		/rbx where not {
+			(\tpop %rbx\n) print
+			dup /rbx exch def
+			{ (\tpush ) print (%rbx) print (\n) print } def
+		} {
+			pop /r13 where not {
+				(\tpop %r13\n) print
+				dup /r13 exch def
+				{ (\tpush ) print (%r13) print (\n) print } def
+			} {
+				pop /r14 where not {
+					(\tpop %r14\n) print
+					dup /r14 exch def
+					{ (\tpush ) print (%r14) print (\n) print } def
+				} {
+					pop /r15 where not {
+						(\tpop %r15\n) print
+						dup /r15 exch def
+						{ (\tpush ) print (%r15) print (\n) print } def
+					} {
+						pop (ERRORNOREG) print
+					} ifelse
+				} ifelse
+			} ifelse
+		} ifelse 
+	} ifelse
+} def
+
+/bind { } def
+/noreturn { } def
+
+end
+
+/compile {
+	(r) file
+	parse cvx
+	
+	compileenv begin
+		exec
+	end
+	outmain closefile
+} def
+
+%(test.ps) compile
+%quit
