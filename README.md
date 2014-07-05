@@ -1,4 +1,4 @@
-ps-compiler
+Compiler.ps
 ===========
 
 Small toy compiler for postscript written in postscript. Postscript is not
